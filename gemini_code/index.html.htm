@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bedrock AgentCore Chat Client</title>
+    <!-- Tailwind CSS for modern UI styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen flex flex-col items-center justify-between p-4">
+
+    <!-- Header -->
+    <header class="w-full max-w-4xl bg-gray-800 shadow-md rounded-lg p-4 mb-4 flex flex-col md:flex-row justify-between items-center gap-4">
+        <div>
+            <h1 class="text-xl font-bold text-cyan-400">Bedrock AgentCore Client</h1>
+            <p class="text-sm text-gray-400">Connected to local FastAPI backend</p>
+        </div>
+        <!-- Session Controls -->
+        <div class="flex flex-wrap gap-2 items-center text-sm">
+            <div>
+                <label class="block text-xs text-gray-400">Actor ID (User UUID):</label>
+                <input type="text" id="actorId" value="a1b2c3d4-e5f6-7890-abcd-ef0123456789"
+                    class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs w-64 focus:outline-none focus:border-cyan-400">
+            </div>
+            <div>
+                <label class="block text-xs text-gray-400">Session ID:</label>
+                <input type="text" id="sessionId" value="" placeholder="Auto-generated if blank"
+                    class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs w-48 focus:outline-none focus:border-cyan-400">
+            </div>
+            <button id="loadHistoryBtn" class="mt-4 bg-gray-700 hover:bg-gray-600 text-cyan-300 border border-cyan-500/30 px-3 py-1 rounded text-xs transition">
+                Load History
+            </button>
+        </div>
+    </header>
+
+    <!-- Chat Box Container -->
+    <main class="w-full max-w-4xl bg-gray-800 rounded-lg shadow-lg flex flex-col flex-grow mb-4 overflow-hidden h-[60vh]">
+        <div id="chatLog" class="flex-grow p-4 overflow-y-auto space-y-4 flex flex-col">
+            <div class="text-center text-gray-500 text-sm my-auto">
+                No messages yet. Send a message or load history to begin.
+            </div>
+        </div>
+    </main>
+
+    <!-- Input Footer -->
+    <footer class="w-full max-w-4xl bg-gray-800 p-4 rounded-lg shadow-md flex gap-2">
+        <input type="text" id="messageInput" placeholder="Type your message here..."
+            class="flex-grow bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-cyan-400">
+        <button id="sendBtn" class="bg-cyan-600 hover:bg-cyan-500 text-white px-6 py-2 rounded-lg text-sm font-medium transition">
+            Send
+        </button>
+    </footer>
+
+    <!-- JavaScript Logic -->
+    <script>
+        const API_BASE = "http://localhost:8000";
+
+        // Auto-generate session ID on page load if empty
+        document.addEventListener("DOMContentLoaded", () => {
+            const sessionInput = document.getElementById("sessionId");
+            if (sessionInput && !sessionInput.value) {
+                sessionInput.value = "session-" + Math.random().toString(36).substring(2, 9);
+            }
+
+            // Bind event listeners safely
+            document.getElementById("sendBtn").addEventListener("click", sendMessage);
+            document.getElementById("loadHistoryBtn").addEventListener("click", loadHistory);
+            document.getElementById("messageInput").addEventListener("keydown", (event) => {
+                if (event.key === "Enter") {
+                    sendMessage();
+                }
+            });
+        });
+
+        function appendMessage(role, text, timestamp = null) {
+            const chatLog = document.getElementById("chatLog");
+
+            // Remove placeholder if present
+            if (chatLog.querySelector(".text-center")) {
+                chatLog.innerHTML = "";
+            }
+
+            const isUser = role === "USER";
+            const timeString = timestamp ? new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            const messageDiv = document.createElement("div");
+            messageDiv.className = `flex flex-col max-w-[75%] ${isUser ? "ml-auto items-end" : "mr-auto items-start"}`;
+
+            messageDiv.innerHTML = `
+                <div class="rounded-2xl px-4 py-2 text-sm ${isUser ? "bg-cyan-600 text-white rounded-br-none" : "bg-gray-700 text-gray-200 rounded-bl-none"}">
+                    ${escapeHtml(text)}
+                </div>
+                <span class="text-[10px] text-gray-400 mt-1 px-1">${role} • ${timeString}</span>
+            `;
+
+            chatLog.appendChild(messageDiv);
+            chatLog.scrollTop = chatLog.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const actorId = document.getElementById("actorId").value.trim();
+            let sessionInput = document.getElementById("sessionId");
+            let sessionId = sessionInput.value.trim();
+            const messageInput = document.getElementById("messageInput");
+            const message = messageInput.value.trim();
+
+            if (!message || !actorId) {
+                alert("Please ensure Actor ID and Message are filled out.");
+                return;
+            }
+
+            // Auto-generate session ID if empty
+            if (!sessionId) {
+                sessionId = "session-" + Math.random().toString(36).substring(2, 9);
+                sessionInput.value = sessionId;
+            }
+
+            // Display user message immediately on screen
+            appendMessage("USER", message);
+            messageInput.value = "";
+
+            try {
+                const response = await fetch(`${API_BASE}/chat`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ actor_id: actorId, session_id: sessionId, message: message })
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || "Failed to communicate with server");
+                }
+
+                const data = await response.json();
+                // Display assistant reply
+                appendMessage("ASSISTANT", data.response_message);
+
+            } catch (error) {
+                console.error("Chat error:", error);
+                appendMessage("SYSTEM", `Connection Error: Is your FastAPI backend running at ${API_BASE}? (${error.message})`);
+            }
+        }
+
+        async function loadHistory() {
+            const actorId = document.getElementById("actorId").value.trim();
+            const sessionId = document.getElementById("sessionId").value.trim();
+
+            if (!actorId || !sessionId) {
+                alert("Actor ID and Session ID are required to load history.");
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/chat/history?actor_id=${encodeURIComponent(actorId)}&session_id=${encodeURIComponent(sessionId)}`);
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || "Failed to fetch history");
+                }
+
+                const data = await response.json();
+                const chatLog = document.getElementById("chatLog");
+                chatLog.innerHTML = "";
+
+                if (!data.history || data.history.length === 0) {
+                    chatLog.innerHTML = `<div class="text-center text-gray-500 text-sm my-auto">No historic chats found for this session.</div>`;
+                    return;
+                }
+
+                data.history.forEach(item => {
+                    appendMessage(item.role, item.text, item.timestamp);
+                });
+
+            } catch (error) {
+                console.error("History error:", error);
+                alert(`Error loading history: Is your backend running? (${error.message})`);
+            }
+        }
+
+        function escapeHtml(text) {
+            if (!text) return "";
+            return text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+    </script>
+</body>
+</html>
